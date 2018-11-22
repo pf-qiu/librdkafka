@@ -17,14 +17,17 @@ struct TopicConsumer
     TopicConsumer()
     {
         char errstr[0x200];
-        rk = rd_kafka_new(RD_KAFKA_CONSUMER, 0, errstr, sizeof(errstr));
+        rd_kafka_conf_t* conf = rd_kafka_conf_new();
+        rd_kafka_conf_set(conf, "queued.min.messages", "1000000", NULL, 0);
+        rd_kafka_conf_set(conf, "session.timeout.ms", "6000", NULL, 0);
+
+        rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
         if (rk == NULL)
         {
             printf("%s\n", errstr);
         }
         rd_kafka_brokers_add(rk, brokers);
         rkt = rd_kafka_topic_new(rk, topic, 0);
-
     }
     ~TopicConsumer()
     {
@@ -148,7 +151,7 @@ int main(int argc, char** argv) {
         for (int i = 0; i < partitions; i++)
         {
             threads.emplace_back([&c](int part){
-             c.Consume(part);
+                c.Consume(part);
             }, i);
         }
 
