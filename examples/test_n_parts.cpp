@@ -41,7 +41,6 @@ struct TopicConsumer
         bool eof = false;
         while(!eof)
         {
-            rd_kafka_poll(rk, 0);
             ssize_t count = rd_kafka_consume_batch(rkt, partition, 1000, messages, BATCH_SIZE);
             if (count < 0)
             {
@@ -83,9 +82,76 @@ struct TopicConsumer
         ConsumeWorker(partition);
         rd_kafka_consume_stop(rkt, partition);
     }
+
+    void CreateQueues(int partitions, int cores)
+    {
+        for (int i = 0; i < cores; i++)
+        {
+            queues.emplace_back(rd_kafka_queue_new(rk));
+        }
+        for (int i = 0; i < partitions; i++)
+        {
+            rd_kafka_consume_start_queue(rkt, i, 0, queues[i % cores]);
+        }
+    }
+    void StopQueues(int partitions)
+    {
+        for (int i = 0; i < partitions; i++)
+        {
+            rd_kafka_consume_stop(rkt, i);
+        }
+        for (rd_kafka_queue_t* q : queues)
+        {
+            rd_kafka_queue_destroy(q);
+        }
+        queues.clear();
+    }
+    void ConsumeQueueWorker(int q)
+    {
+        rd_kafka_queue_t* rkq = queues[q];
+        rd_kafka_message_t* messages[BATCH_SIZE];
+        bool eof = false;
+        while(!eof)
+        {
+            ssize_t count = rd_kafka_consume_batch_queue(rkq, 1000, messages, BATCH_SIZE);
+            if (count < 0)
+            {
+                printf("%s\n", rd_kafka_err2str(rd_kafka_last_error()));
+                return;
+            }
+            if (count == 0)
+                continue;
+            size_t bytes = 0;
+            for (ssize_t i = 0; i < count; i++)
+            {
+                rd_kafka_message_t* msg = messages[i];
+                if (msg->err)
+                {
+                    eof = true;
+                    if (msg->err == RD_KAFKA_RESP_ERR__PARTITION_EOF)
+                    {
+                        count--;
+                        break;
+                    }
+                    else
+                    {
+                        printf("message error: %d, %s\n", msg->err, rd_kafka_err2str(msg->err));
+                        count = 0;
+                        break;
+                    }
+                }
+                bytes += msg->len;
+                rd_kafka_message_destroy(msg);
+            }
+            message_count += count;
+            message_bytes += bytes;
+        }
+    }
     rd_kafka_t* rk;
     rd_kafka_topic_t* rkt;
     int partition;
+
+    vector<rd_kafka_queue_t*> queues;
 };
 struct MetaConsumer
 {
@@ -123,7 +189,7 @@ int main(int argc, char** argv) {
 
     brokers = argv[1];
     topic = argv[2];
-
+    
     int partitions = GetPartition();
     printf("reading %d partitions\n", partitions);
     if (strstr(argv[0], "single"))
@@ -148,15 +214,35 @@ int main(int argc, char** argv) {
         cout << "multi" << endl;
         TopicConsumer c;
         vector<thread> threads;
-        for (int i = 0; i < partitions; i++)
-        {
-            threads.emplace_back([&c](int part){
-                c.Consume(part);
-            }, i);
-        }
+        int cores = thread::hardware_concurrency();
 
-        for (auto& t : threads) {
-             t.join();
+        if (partitions > cores)
+        {
+            c.CreateQueues(partitions, cores);
+            for (int i = 0; i < cores; i++)
+            {
+                threads.emplace_back([&c](int q){
+                    c.ConsumeQueueWorker(q);
+                }, i);
+            }
+            for (auto& t : threads)
+            {
+                t.join();
+            }
+            c.StopQueues(partitions);
+        } 
+        else 
+        {
+            for (int i = 0; i < partitions; i++)
+            {
+                threads.emplace_back([&c](int part){
+                    c.Consume(part);
+                }, i);
+            }
+            for (auto& t : threads)
+            {
+                t.join();
+            }
         }
     }
 
