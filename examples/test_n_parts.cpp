@@ -18,8 +18,13 @@ struct TopicConsumer
     {
         char errstr[0x200];
         rk = rd_kafka_new(RD_KAFKA_CONSUMER, 0, errstr, sizeof(errstr));
+        if (rk == NULL)
+        {
+            printf("%s\n", errstr);
+        }
         rd_kafka_brokers_add(rk, brokers);
         rkt = rd_kafka_topic_new(rk, topic, 0);
+
     }
     ~TopicConsumer()
     {
@@ -35,7 +40,13 @@ struct TopicConsumer
         {
             rd_kafka_poll(rk, 0);
             ssize_t count = rd_kafka_consume_batch(rkt, partition, 1000, messages, BATCH_SIZE);
-            if (count <= 0) return;
+            if (count < 0)
+            {
+                printf("%s\n", rd_kafka_err2str(rd_kafka_last_error()));
+                return;
+            }
+            if (count == 0)
+                continue;
             size_t bytes = 0;
             for (ssize_t i = 0; i < count; i++)
             {
@@ -111,6 +122,7 @@ int main(int argc, char** argv) {
     topic = argv[2];
 
     int partitions = GetPartition();
+    printf("reading %d partitions\n", partitions);
     if (strstr(argv[0], "single"))
     {
         cout << "single" << endl;
