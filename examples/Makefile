@@ -91,6 +91,12 @@ rdkafka_zookeeper_example: ../src/librdkafka.a rdkafka_zookeeper_example.c
 	@echo "# More usage options:"
 	@echo "./$@ -h"
 
+test_n_parts: ../src/librdkafka.a
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -std=c++11 test_n_parts.cpp -o $@ $(LDFLAGS) \
+		../src-cpp/librdkafka++.a ../src/librdkafka.a $(LIBS) -lstdc++
+	cp $@ single
+	cp $@ multi
+
 clean:
 	rm -f $(EXAMPLES)
 
