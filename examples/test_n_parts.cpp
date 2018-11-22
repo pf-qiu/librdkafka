@@ -1,4 +1,5 @@
-#include <librdkafka/rdkafka.h>
+#include "rdkafka.h"
+#include <string.h>
 #include <thread>
 #include <atomic>
 #include <vector>
