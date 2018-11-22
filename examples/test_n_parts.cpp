@@ -4,6 +4,7 @@
 #include <atomic>
 #include <vector>
 #include <iostream>
+#include <chrono>
 
 using namespace std;
 const char* brokers;
@@ -99,7 +100,7 @@ struct TopicConsumer
         {
             data.bytes = 0;
             data.messages = 0;
-            int count = rd_kafka_consume_callback(rkt, partition, 1000, 
+            int count = rd_kafka_consume_callback(rkt, partition, 0, 
             [](rd_kafka_message_t* msg, void* opaque){
                 ConsumeData* cd = (ConsumeData*)opaque;
                 if (msg->err)
@@ -124,12 +125,11 @@ struct TopicConsumer
                 return;
             }
             if (count == 0)
-                continue;
-
-            if (count != data.messages)
             {
-                printf("mismatch: %d, %d\n", count, data.messages);
+                this_thread::sleep_for(chrono::milliseconds(1000));
+                continue;
             }
+
             message_count += data.messages;
             message_bytes += data.bytes;
         }
