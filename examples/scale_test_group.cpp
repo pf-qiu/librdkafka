@@ -11,6 +11,33 @@ const char *topic;
 std::atomic<size_t> message_count;
 std::atomic<size_t> message_bytes;
 
+
+static void rebalance_cb(rd_kafka_t *rk,
+	rd_kafka_resp_err_t err,
+	rd_kafka_topic_partition_list_t *partitions,
+	void *opaque) {
+
+	switch (err)
+	{
+	case RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS:
+		fprintf(stderr,
+			"%% Group rebalanced: %d partition(s) assigned\n",
+			partitions->cnt);
+		rd_kafka_assign(rk, partitions);
+		break;
+
+	case RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS:
+		fprintf(stderr,
+			"%% Group rebalanced: %d partition(s) revoked\n",
+			partitions->cnt);
+		rd_kafka_assign(rk, NULL);
+		break;
+
+	default:
+		break;
+	}
+}
+
 #define BATCH_SIZE 1024
 struct TopicConsumer
 {
@@ -22,6 +49,7 @@ struct TopicConsumer
         rd_kafka_conf_set(conf, "session.timeout.ms", "6000", NULL, 0);
         rd_kafka_conf_set(conf, "group.id", "testgroup", NULL, 0);
         rd_kafka_conf_set(conf, "enable.auto.commit", "false", NULL, 0);
+		rd_kafka_conf_set_rebalance_cb(conf, rebalance_cb);
 
         rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
         if (rk == NULL)
@@ -29,8 +57,9 @@ struct TopicConsumer
             cout << errstr << endl;
             exit(1);
         }
+		rd_kafka_poll_set_consumer(rk);
         rd_kafka_brokers_add(rk, brokers);
-
+		
         rkt = rd_kafka_topic_new(rk, topic, 0);
         auto list = rd_kafka_topic_partition_list_new(partition_count);
         for (int i = 0; i < partition_count; i++)
