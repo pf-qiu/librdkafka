@@ -96,6 +96,9 @@ scale_test: ../src/librdkafka.a scale_test.cpp
 		../src/librdkafka.a $(LIBS) -lstdc++
 	cp $@ n_rd_kafka_t
 	cp $@ 1_rd_kafka_t
+scale_test_group: ../src/librdkafka.a scale_test_group.cpp
+	$(CXX) $(CPPFLAGS) $(CFLAGS) -std=c++11 scale_test_group.cpp -o $@ $(LDFLAGS) \
+		../src/librdkafka.a $(LIBS) -lstdc++
 
 clean:
 	rm -f $(EXAMPLES)
