@@ -83,13 +83,12 @@ struct TopicConsumer
 };
 struct MetaConsumer
 {
-    MetaConsumer()
+    MetaConsumer() : rk(0), rkt(0), meta(0)
     {
         char errstr[0x200];
         rk = rd_kafka_new(RD_KAFKA_CONSUMER, 0, errstr, sizeof(errstr));
         rd_kafka_brokers_add(rk, brokers);
         rkt = rd_kafka_topic_new(rk, topic, 0);
-        const rd_kafka_metadata_t *meta;
         rd_kafka_metadata(rk, 0, rkt, &meta, 2000);
     }
     ~MetaConsumer()
@@ -101,7 +100,7 @@ struct MetaConsumer
 
     rd_kafka_t *rk;
     rd_kafka_topic_t *rkt;
-    rd_kafka_metadata_t *meta;
+    const rd_kafka_metadata_t *meta;
 };
 
 struct Meta
@@ -109,8 +108,11 @@ struct Meta
     Meta()
     {
         MetaConsumer consumer;
-        partition_count = consumer.meta->topics[0].partition_cnt;
-        broker_count = consumer.meta->broker_cnt;
+        if (consumer.meta)
+        {
+            partition_count = consumer.meta->topics[0].partition_cnt;
+            broker_count = consumer.meta->broker_cnt;
+        }
     }
     int partition_count;
     int broker_count;
