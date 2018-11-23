@@ -2511,6 +2511,17 @@ rd_kafka_message_t *rd_kafka_consumer_poll (rd_kafka_t *rk,
         return rd_kafka_consume0(rk, rkcg->rkcg_q, timeout_ms);
 }
 
+ssize_t rd_kafka_consumer_poll_batch(rd_kafka_t *rk,
+	int timeout_ms, rd_kafka_message_t **rkmessages,
+	size_t rkmessages_size) {
+	rd_kafka_cgrp_t *rkcg;
+
+	if (unlikely(!(rkcg = rd_kafka_cgrp_get(rk)))) {
+		return -1;
+	}
+	return rd_kafka_consume_batch0(rkcg->rkcg_q, timeout_ms, rkmessages, rkmessages_size);
+}
+
 
 rd_kafka_resp_err_t rd_kafka_consumer_close (rd_kafka_t *rk) {
         rd_kafka_cgrp_t *rkcg;

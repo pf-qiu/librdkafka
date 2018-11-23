@@ -3089,6 +3089,10 @@ rd_kafka_subscription (rd_kafka_t *rk,
 RD_EXPORT
 rd_kafka_message_t *rd_kafka_consumer_poll (rd_kafka_t *rk, int timeout_ms);
 
+RD_EXPORT
+ssize_t rd_kafka_consumer_poll_batch(rd_kafka_t *rk, int timeout_ms, 
+	rd_kafka_message_t **rkmessages, size_t rkmessages_size);
+
 /**
  * @brief Close down the KafkaConsumer.
  *

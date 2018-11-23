@@ -11,33 +11,6 @@ const char *topic;
 std::atomic<size_t> message_count;
 std::atomic<size_t> message_bytes;
 
-
-static void rebalance_cb(rd_kafka_t *rk,
-	rd_kafka_resp_err_t err,
-	rd_kafka_topic_partition_list_t *partitions,
-	void *opaque) {
-
-	switch (err)
-	{
-	case RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS:
-		fprintf(stderr,
-			"%% Group rebalanced: %d partition(s) assigned\n",
-			partitions->cnt);
-		rd_kafka_assign(rk, partitions);
-		break;
-
-	case RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS:
-		fprintf(stderr,
-			"%% Group rebalanced: %d partition(s) revoked\n",
-			partitions->cnt);
-		rd_kafka_assign(rk, NULL);
-		break;
-
-	default:
-		break;
-	}
-}
-
 #define BATCH_SIZE 1024
 struct TopicConsumer
 {
@@ -49,7 +22,6 @@ struct TopicConsumer
         rd_kafka_conf_set(conf, "session.timeout.ms", "6000", NULL, 0);
         rd_kafka_conf_set(conf, "group.id", "testgroup", NULL, 0);
         rd_kafka_conf_set(conf, "enable.auto.commit", "false", NULL, 0);
-		rd_kafka_conf_set_rebalance_cb(conf, rebalance_cb);
 
         rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
         if (rk == NULL)
@@ -60,14 +32,17 @@ struct TopicConsumer
 		rd_kafka_poll_set_consumer(rk);
         rd_kafka_brokers_add(rk, brokers);
 		
-        rkt = rd_kafka_topic_new(rk, topic, 0);
+		auto topic_conf = rd_kafka_topic_conf_new();
+		rd_kafka_topic_conf_set(topic_conf, "auto.offset.reset", "earliest", NULL, 0);
+
+        rkt = rd_kafka_topic_new(rk, topic, topic_conf);
         auto list = rd_kafka_topic_partition_list_new(partition_count);
         for (int i = 0; i < partition_count; i++)
         {
             auto p = rd_kafka_topic_partition_list_add(list, topic, i);
             p->offset = 0;
         }
-        rd_kafka_subscribe(rk, list);
+        //rd_kafka_subscribe(rk, list);
         rd_kafka_assign(rk, list);
     }
     ~TopicConsumer()
@@ -80,29 +55,44 @@ struct TopicConsumer
 
     void Consume()
     {
+		rd_kafka_message_t* messages[BATCH_SIZE];
         while (finished < partition_count)
         {
-            rd_kafka_message_t *msg = rd_kafka_consumer_poll(rk, 1000);
-            if (msg == NULL)
-                continue;
-            if (msg->err)
-            {
-                if (msg->err == RD_KAFKA_RESP_ERR__PARTITION_EOF)
-                {
-                    finished++;
-                }
-                else
-                {
-                    cout << rd_kafka_err2str(msg->err) << endl;
-                    break;
-                }
-            }
-            else
-            {
-                message_bytes += msg->len;
-                message_count += 1;
-            }
-            rd_kafka_message_destroy(msg);
+			ssize_t count = rd_kafka_consumer_poll_batch(rk, 1000, messages, BATCH_SIZE);
+			if (count < 0)
+			{
+				cout << rd_kafka_err2str(rd_kafka_last_error()) << endl;
+				exit(1);
+			}
+			if (count == 0)
+				continue;
+
+			int msg_count = 0;
+			size_t bytes = 0;
+			for (ssize_t i = 0; i < count; i++)
+			{
+				rd_kafka_message_t *msg = messages[i];
+				if (msg->err)
+				{
+					if (msg->err == RD_KAFKA_RESP_ERR__PARTITION_EOF)
+					{
+						finished++;
+					}
+					else
+					{
+						cout << rd_kafka_err2str(msg->err) << endl;
+						break;
+					}
+				}
+				else
+				{
+					msg_count++;
+					bytes += msg->len;
+				}
+				rd_kafka_message_destroy(msg);
+			}
+			message_count += msg_count;
+			message_bytes += bytes;
         }
     }
     rd_kafka_t *rk;
@@ -165,7 +155,7 @@ int main(int argc, char **argv)
     TopicConsumer c(meta.partition_count);
     vector<thread> threads;
 
-    for (int i = 0; i < meta.broker_count; i++)
+    for (int i = 0; i < thread::hardware_concurrency(); i++)
     {
         threads.emplace_back([&c](int index) {
             c.Consume();
