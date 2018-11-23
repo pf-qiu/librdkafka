@@ -6,8 +6,8 @@
 #include <iostream>
 
 using namespace std;
-const char* brokers;
-const char* topic;
+const char *brokers;
+const char *topic;
 std::atomic<size_t> message_count;
 std::atomic<size_t> message_bytes;
 
@@ -17,7 +17,7 @@ struct TopicConsumer
     TopicConsumer(int partitions) : partition_count(partitions)
     {
         char errstr[0x200];
-        rd_kafka_conf_t* conf = rd_kafka_conf_new();
+        rd_kafka_conf_t *conf = rd_kafka_conf_new();
         rd_kafka_conf_set(conf, "queued.min.messages", "1000000", NULL, 0);
         rd_kafka_conf_set(conf, "session.timeout.ms", "6000", NULL, 0);
         rd_kafka_conf_set(conf, "group.id", "testgroup", NULL, 0);
@@ -51,9 +51,9 @@ struct TopicConsumer
 
     void Consume()
     {
-        while(finished < partition_count)
+        while (finished < partition_count)
         {
-            rd_kafka_message_t* msg = rd_kafka_consumer_poll(rk, 1000);
+            rd_kafka_message_t *msg = rd_kafka_consumer_poll(rk, 1000);
             if (msg == NULL)
                 continue;
             if (msg->err)
@@ -76,8 +76,8 @@ struct TopicConsumer
             rd_kafka_message_destroy(msg);
         }
     }
-    rd_kafka_t* rk;
-    rd_kafka_topic_t* rkt;
+    rd_kafka_t *rk;
+    rd_kafka_topic_t *rkt;
     int partition_count;
     atomic<int> finished;
 };
@@ -89,32 +89,44 @@ struct MetaConsumer
         rk = rd_kafka_new(RD_KAFKA_CONSUMER, 0, errstr, sizeof(errstr));
         rd_kafka_brokers_add(rk, brokers);
         rkt = rd_kafka_topic_new(rk, topic, 0);
-        const rd_kafka_metadata_t* meta;
+        const rd_kafka_metadata_t *meta;
         rd_kafka_metadata(rk, 0, rkt, &meta, 2000);
-        partition_count = meta->topics[0].partition_cnt;
-        broker_count = meta->broker_cnt;
     }
     ~MetaConsumer()
     {
+        rd_kafka_metadata_destroy(meta);
         rd_kafka_topic_destroy(rkt);
         rd_kafka_destroy(rk);
     }
 
-    rd_kafka_t* rk;
-    rd_kafka_topic_t* rkt;
+    rd_kafka_t *rk;
+    rd_kafka_topic_t *rkt;
+    rd_kafka_metadata_t *meta;
+};
+
+struct Meta
+{
+    Meta()
+    {
+        MetaConsumer consumer;
+        partition_count = consumer.meta->topics[0].partition_cnt;
+        broker_count = consumer.meta->broker_cnt;
+    }
     int partition_count;
     int broker_count;
 };
 
-int main(int argc, char** argv) {
-    if (argc < 3) {
+int main(int argc, char **argv)
+{
+    if (argc < 3)
+    {
         return 1;
     }
 
     brokers = argv[1];
     topic = argv[2];
 
-    MetaConsumer meta;
+    Meta meta;
 
     cout << "reading " << meta.partition_count << " partitions" << endl;
     cout << "create one consumer, shared by all workers" << endl;
@@ -124,12 +136,14 @@ int main(int argc, char** argv) {
 
     for (int i = 0; i < meta.broker_count; i++)
     {
-        threads.emplace_back([&c](int index){
+        threads.emplace_back([&c](int index) {
             c.Consume();
-        }, i);
+        },
+                             i);
     }
-    for (auto& t : threads) {
-         t.join();
+    for (auto &t : threads)
+    {
+        t.join();
     }
 
     cout << "Messages: " << message_count << endl;
