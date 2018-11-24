@@ -541,10 +541,9 @@ int rd_kafka_q_serve_rkmessages (rd_kafka_q_t *rkq, int timeout_ms,
         rd_timeout_init_timespec(&timeout_tspec, timeout_ms);
 
         rd_kafka_yield_thread = 0;
+        mtx_lock(&rkq->rkq_lock);
 	while (cnt < rkmessages_size) {
                 rd_kafka_op_res_t res;
-
-                mtx_lock(&rkq->rkq_lock);
 
                 while (!(rko = TAILQ_FIRST(&rkq->rkq_q)) &&
                        !rd_kafka_q_check_yield(rkq) &&
@@ -553,13 +552,10 @@ int rd_kafka_q_serve_rkmessages (rd_kafka_q_t *rkq, int timeout_ms,
                         ;
 
 		if (!rko) {
-                        mtx_unlock(&rkq->rkq_lock);
 			break; /* Timed out */
                 }
 
 		rd_kafka_q_deq0(rkq, rko);
-
-                mtx_unlock(&rkq->rkq_lock);
 
 		if (rd_kafka_op_version_outdated(rko, 0)) {
                         /* Outdated op, put on discard queue */
@@ -581,23 +577,10 @@ int rd_kafka_q_serve_rkmessages (rd_kafka_q_t *rkq, int timeout_ms,
                 }
                 rd_dassert(res == RD_KAFKA_OP_RES_PASS);
 
-		/* Auto-commit offset, if enabled. */
-		if (!rko->rko_err && rko->rko_type == RD_KAFKA_OP_FETCH) {
-                        rd_kafka_toppar_t *rktp;
-                        rktp = rd_kafka_toppar_s2i(rko->rko_rktp);
-			rd_kafka_toppar_lock(rktp);
-			rktp->rktp_app_offset = rko->rko_u.fetch.rkm.rkm_offset+1;
-                        if (rktp->rktp_cgrp &&
-			    rk->rk_conf.enable_auto_offset_store)
-                                rd_kafka_offset_store0(rktp,
-						       rktp->rktp_app_offset,
-                                                       0/* no lock */);
-			rd_kafka_toppar_unlock(rktp);
-                }
-
 		/* Get rkmessage from rko and append to array. */
 		rkmessages[cnt++] = rd_kafka_message_get(rko);
 	}
+        mtx_unlock(&rkq->rkq_lock);
 
         /* Discard non-desired and already handled ops */
         next = TAILQ_FIRST(&tmpq);

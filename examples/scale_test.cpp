@@ -107,7 +107,6 @@ struct TopicConsumer
         bool eof = false;
         while (!eof)
         {
-            rd_kafka_poll(rk, 0);
             ssize_t count = rd_kafka_consume_batch_queue(rkq, 1000, messages, BATCH_SIZE);
             if (count < 0)
             {
