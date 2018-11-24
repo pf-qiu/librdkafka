@@ -21,11 +21,6 @@ struct TopicConsumer
         rd_kafka_conf_set(conf, "queued.min.messages", "1000000", NULL, 0);
         rd_kafka_conf_set(conf, "session.timeout.ms", "6000", NULL, 0);
         rd_kafka_conf_set(conf, "enable.sparse.connections", "true", NULL, 0);
-        if (ev)
-        {
-            rd_kafka_conf_set_events(conf, RD_KAFKA_EVENT_FETCH);
-            rd_kafka_conf_set_events(conf, RD_KAFKA_EVENT_ERROR);
-        }
 
         rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
         if (rk == NULL)
@@ -91,58 +86,60 @@ struct TopicConsumer
         rd_kafka_consume_stop(rkt, partition);
     }
 
+    void Consume(int index, int workers, int partitions)
+    {
+        auto q = rd_kafka_queue_new(rk);
+        for (int i = index; i < partitions; i += workers)
+        {
+            rd_kafka_consume_start_queue(rkt, i, 0, q);
+        }
+        ConsumeQueueWorker(q);
+        for (int i = index; i < partitions; i += workers)
+        {
+            rd_kafka_consume_stop(rkt, i);
+        }
+        rd_kafka_queue_destroy(q);
+    }
+
     void ConsumeQueueWorker(rd_kafka_queue_t *rkq)
     {
+        rd_kafka_message_t *messages[BATCH_SIZE];
         bool eof = false;
         while (!eof)
         {
-            rd_kafka_event_t *e = rd_kafka_queue_poll(rkq, 1000);
-            if (e == NULL)
+            rd_kafka_poll(rk, 0);
+            ssize_t count = rd_kafka_consume_batch_queue(rkq, 1000, messages, BATCH_SIZE);
+            if (count < 0)
+            {
+                cout << rd_kafka_err2str(rd_kafka_last_error()) << endl;
+                return;
+            }
+            if (count == 0)
                 continue;
-            switch (rd_kafka_event_type(e))
+            size_t bytes = 0;
+            for (ssize_t i = 0; i < count; i++)
             {
-            case RD_KAFKA_EVENT_FETCH:
-            {
-                const rd_kafka_message_t *msg;
-                size_t bytes = 0;
-                int count = 0;
-                while ((msg = rd_kafka_event_message_next(e)))
+                rd_kafka_message_t *msg = messages[i];
+                if (msg->err)
                 {
-                    if (msg->err)
+                    eof = true;
+                    if (msg->err == RD_KAFKA_RESP_ERR__PARTITION_EOF)
                     {
-                        eof = true;
-                        if (msg->err == RD_KAFKA_RESP_ERR__PARTITION_EOF)
-                        {
-                            break;
-                        }
-                        else
-                        {
-                            cout << rd_kafka_err2str(msg->err) << endl;
-                            break;
-                        }
+                        count--;
+                        break;
                     }
-                    count++;
-                    bytes += msg->len;
+                    else
+                    {
+                        cout << rd_kafka_err2str(msg->err) << endl;
+                        count = 0;
+                        break;
+                    }
                 }
-                message_count += count;
-                message_bytes += bytes;
-                break;
+                bytes += msg->len;
+                rd_kafka_message_destroy(msg);
             }
-            case RD_KAFKA_EVENT_ERROR:
-            {
-                rd_kafka_resp_err_t err = rd_kafka_event_error(e);
-                eof = true;
-                if (err == RD_KAFKA_RESP_ERR__PARTITION_EOF)
-                {
-                    break;
-                }
-                else
-                {
-                    cout << rd_kafka_err2str(err) << endl;
-                    break;
-                }
-            }
-            }
+            message_count += count;
+            message_bytes += bytes;
         }
     }
 
@@ -220,6 +217,26 @@ int main(int argc, char **argv)
         }
     }
     else if (strstr(argv[0], "kafka_1cnp"))
+    {
+        cout << "create one consumer for each partition" << endl;
+        cout << "create " << partitions << " workers" << endl;
+
+        vector<thread> threads;
+        for (int i = 0; i < thread::hardware_concurrency(); i++)
+        {
+            threads.emplace_back([](int index, int partitions) {
+                TopicConsumer c;
+                c.Consume(index, thread::hardware_concurrency(), partitions);
+            },
+                                 i, partitions);
+        }
+
+        for (auto &t : threads)
+        {
+            t.join();
+        }
+    }
+    else if (strstr(argv[0], "kafka_1cap"))
     {
         cout << "create one consumer, shared by all workers" << endl;
         cout << "create " << partitions << " workers" << endl;
