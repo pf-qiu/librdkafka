@@ -14,15 +14,18 @@ std::atomic<size_t> message_bytes;
 #define BATCH_SIZE 1024
 struct TopicConsumer
 {
-    TopicConsumer()
+    TopicConsumer(bool ev = false)
     {
         char errstr[0x200];
         rd_kafka_conf_t *conf = rd_kafka_conf_new();
         rd_kafka_conf_set(conf, "queued.min.messages", "1000000", NULL, 0);
         rd_kafka_conf_set(conf, "session.timeout.ms", "6000", NULL, 0);
         rd_kafka_conf_set(conf, "enable.sparse.connections", "true", NULL, 0);
-        rd_kafka_conf_set_events(conf, RD_KAFKA_EVENT_FETCH);
-        rd_kafka_conf_set_events(conf, RD_KAFKA_EVENT_ERROR);
+        if (ev)
+        {
+            rd_kafka_conf_set_events(conf, RD_KAFKA_EVENT_FETCH);
+            rd_kafka_conf_set_events(conf, RD_KAFKA_EVENT_ERROR);
+        }
 
         rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
         if (rk == NULL)
@@ -241,7 +244,7 @@ int main(int argc, char **argv)
         cout << "create one consumer, shared by all workers" << endl;
         cout << "create " << partitions << " queues" << endl;
 
-        TopicConsumer c;
+        TopicConsumer c(true);
         vector<thread> threads;
         for (int i = 0; i < partitions; i++)
         {
