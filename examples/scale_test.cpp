@@ -4,6 +4,9 @@
 #include <atomic>
 #include <vector>
 #include <iostream>
+#include <map>
+#include <unordered_map>
+#include <memory>
 
 using namespace std;
 const char *brokers;
@@ -14,7 +17,7 @@ std::atomic<size_t> message_bytes;
 #define BATCH_SIZE 1024
 struct TopicConsumer
 {
-    TopicConsumer(bool ev = false)
+    TopicConsumer() : rk(NULL), rkt(NULL)
     {
         char errstr[0x200];
         rd_kafka_conf_t *conf = rd_kafka_conf_new();
@@ -86,21 +89,6 @@ struct TopicConsumer
         rd_kafka_consume_stop(rkt, partition);
     }
 
-    void Consume(int index, int workers, int partitions)
-    {
-        auto q = rd_kafka_queue_new(rk);
-        for (int i = index; i < partitions; i += workers)
-        {
-            rd_kafka_consume_start_queue(rkt, i, 0, q);
-        }
-        ConsumeQueueWorker(q);
-        for (int i = index; i < partitions; i += workers)
-        {
-            rd_kafka_consume_stop(rkt, i);
-        }
-        rd_kafka_queue_destroy(q);
-    }
-
     void ConsumeQueueWorker(rd_kafka_queue_t *rkq)
     {
         rd_kafka_message_t *messages[BATCH_SIZE];
@@ -162,9 +150,7 @@ struct MetaConsumer
         rk = rd_kafka_new(RD_KAFKA_CONSUMER, 0, errstr, sizeof(errstr));
         rd_kafka_brokers_add(rk, brokers);
         rkt = rd_kafka_topic_new(rk, topic, 0);
-        const rd_kafka_metadata_t *meta;
         rd_kafka_metadata(rk, 0, rkt, &meta, 2000);
-        partition = meta->topics[0].partition_cnt;
     }
     ~MetaConsumer()
     {
@@ -174,14 +160,39 @@ struct MetaConsumer
 
     rd_kafka_t *rk;
     rd_kafka_topic_t *rkt;
-    int partition;
+    const rd_kafka_metadata_t *meta;
 };
 
-int GetTopicPartitions()
+struct PartitionMeta
 {
-    MetaConsumer meta;
-    return meta.partition;
-}
+    int id;
+    int leader;
+};
+
+struct BrokerMeta
+{
+    int id;
+};
+
+struct Meta
+{
+    Meta()
+    {
+        MetaConsumer mc;
+        for (int i = 0; i < mc.meta->broker_cnt; i++)
+        {
+            broker_map.emplace_back(mc.meta->brokers[i].id);
+        }
+
+        for (int i = 0; i < mc.meta->topics->partition_cnt; i++)
+        {
+            auto p = mc.meta->topics->partitions + i;
+            partition_map[p->id] = p->leader;
+        }
+    }
+    vector<int> broker_map;
+    map<int, int> partition_map;
+};
 
 int main(int argc, char **argv)
 {
@@ -192,8 +203,8 @@ int main(int argc, char **argv)
 
     brokers = argv[1];
     topic = argv[2];
-
-    int partitions = GetTopicPartitions();
+    Meta m;
+    int partitions = m.partition_map.size();
     cout << "reading " << partitions << " partitions" << endl;
     if (strstr(argv[0], "kafka_1c1p"))
     {
@@ -201,13 +212,13 @@ int main(int argc, char **argv)
         cout << "create " << partitions << " workers" << endl;
 
         vector<thread> threads;
+        auto f = [](int partition) {
+            TopicConsumer c;
+            c.Consume(partition);
+        };
         for (int i = 0; i < partitions; i++)
         {
-            threads.emplace_back([](int part) {
-                TopicConsumer c;
-                c.Consume(part);
-            },
-                                 i);
+            threads.emplace_back(f, i);
         }
 
         for (auto &t : threads)
@@ -217,20 +228,49 @@ int main(int argc, char **argv)
     }
     else if (strstr(argv[0], "kafka_1cnp"))
     {
-        cout << "create one consumer for each partition" << endl;
-        cout << "create " << partitions << " workers" << endl;
-
-        vector<thread> threads;
-        for (int i = 0; i < thread::hardware_concurrency(); i++)
+        cout << "create multiple consumers to match broker and partition" << endl;
+        map<int, vector<int>> scheduler;
+        for (int id : m.broker_map)
         {
-            threads.emplace_back([](int index, int partitions) {
-                TopicConsumer c;
-                c.Consume(index, thread::hardware_concurrency(), partitions);
-            },
-                                 i, partitions);
+            scheduler.emplace(id, vector<int>());
+        }
+        for (auto &kv : m.partition_map)
+        {
+            int partid = kv.first;
+            int leaderid = kv.second;
+            auto it = scheduler.find(leaderid);
+            if (it == scheduler.end())
+            {
+                cout << "leader " << leaderid << " isnt available for partition " << partid << endl;
+                exit(1);
+            }
+            it->second.emplace_back(partid);
         }
 
-        for (auto &t : threads)
+        vector<unique_ptr<TopicConsumer>> c;
+        vector<thread> workers;
+        auto f = [](TopicConsumer *c, int partition) { c->Consume(partition); };
+        while (!scheduler.empty())
+        {
+            TopicConsumer *tc = new TopicConsumer();
+            c.emplace_back(tc);
+
+            for (auto it = scheduler.begin(); it != scheduler.end();)
+            {
+                workers.emplace_back(f, tc, it->second.back());
+                it->second.pop_back();
+                if (it->second.empty())
+                {
+                    it = scheduler.erase(it);
+                }
+                else
+                {
+                    it++;
+                }
+            }
+        }
+
+        for (auto &t : workers)
         {
             t.join();
         }
@@ -242,12 +282,12 @@ int main(int argc, char **argv)
 
         TopicConsumer c;
         vector<thread> threads;
+        auto f = [](TopicConsumer *c, int partition) {
+            c->Consume(partition);
+        };
         for (int i = 0; i < partitions; i++)
         {
-            threads.emplace_back([&c](int part) {
-                c.Consume(part);
-            },
-                                 i);
+            threads.emplace_back(f, &c, i);
         }
 
         for (auto &t : threads)
@@ -260,14 +300,14 @@ int main(int argc, char **argv)
         cout << "create one consumer, shared by all workers" << endl;
         cout << "create " << partitions << " queues" << endl;
 
-        TopicConsumer c(true);
+        TopicConsumer c;
         vector<thread> threads;
+        auto f = [](TopicConsumer *c, int partition) {
+            c->ConsumeQueue(partition);
+        };
         for (int i = 0; i < partitions; i++)
         {
-            threads.emplace_back([&c](int part) {
-                c.ConsumeQueue(part);
-            },
-                                 i);
+            threads.emplace_back(f, &c, i);
         }
 
         for (auto &t : threads)
