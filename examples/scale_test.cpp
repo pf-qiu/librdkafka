@@ -22,6 +22,7 @@ struct TopicConsumer
         rd_kafka_conf_set(conf, "session.timeout.ms", "6000", NULL, 0);
         rd_kafka_conf_set(conf, "enable.sparse.connections", "true", NULL, 0);
         rd_kafka_conf_set_events(conf, RD_KAFKA_EVENT_FETCH);
+        rd_kafka_conf_set_events(conf, RD_KAFKA_EVENT_ERROR);
 
         rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
         if (rk == NULL)
@@ -95,7 +96,9 @@ struct TopicConsumer
             rd_kafka_event_t *e = rd_kafka_queue_poll(rkq, 1000);
             if (e == NULL)
                 continue;
-            if (RD_KAFKA_EVENT_FETCH == rd_kafka_event_type(e))
+            switch (rd_kafka_event_type(e))
+            {
+            case RD_KAFKA_EVENT_FETCH:
             {
                 const rd_kafka_message_t *msg;
                 size_t bytes = 0;
@@ -120,6 +123,22 @@ struct TopicConsumer
                 }
                 message_count += count;
                 message_bytes += bytes;
+                break;
+            }
+            case RD_KAFKA_EVENT_ERROR:
+            {
+                rd_kafka_resp_err_t err = rd_kafka_event_error(e);
+                eof = true;
+                if (err == RD_KAFKA_RESP_ERR__PARTITION_EOF)
+                {
+                    break;
+                }
+                else
+                {
+                    cout << rd_kafka_err2str(err) << endl;
+                    break;
+                }
+            }
             }
         }
     }
