@@ -42,8 +42,6 @@
 
 #include <openssl/x509.h>
 
-
-
 #if WITH_VALGRIND
 /* OpenSSL relies on uninitialized memory, which Valgrind will whine about.
  * We use in-code Valgrind macros to suppress those warnings. */
@@ -932,9 +930,10 @@ static int rd_kafka_ssl_set_certs (rd_kafka_t *rk, SSL_CTX *ctx,
         if (rk->rk_conf.ssl.keystore_location) {
                 FILE *fp;
                 EVP_PKEY *pkey;
-                X509 *cert;
+                X509 *cert, *cacert;
                 STACK_OF(X509) *ca = NULL;
                 PKCS12 *p12;
+                X509_STORE *store;
 
                 rd_kafka_dbg(rk, SECURITY, "SSL",
                              "Loading client's keystore file from %s",
@@ -972,8 +971,19 @@ static int rd_kafka_ssl_set_certs (rd_kafka_t *rk, SSL_CTX *ctx,
                         return -1;
                 }
 
-                if (ca != NULL)
-                        sk_X509_pop_free(ca, X509_free);
+
+                if (ca != NULL) {
+                        store = SSL_CTX_get_cert_store(ctx);
+                        while((cacert = sk_X509_pop(ca)) != NULL) {
+                                r = X509_STORE_add_cert(store, cacert);
+                                if (r != 1) {
+                                        rd_snprintf(errstr, errstr_size,
+                                                "Failed to add ca cert to store");
+                                }
+
+                                X509_free(cacert);
+                        }
+                }
 
                 PKCS12_free(p12);
 
